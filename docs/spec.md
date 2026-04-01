@@ -1,6 +1,6 @@
 # Yahoo Shopping AI 推薦 Demo — 系統規格書
 
-> **版本**：v1.2  
+> **版本**：v1.3  
 > **日期**：2026-04-01  
 > **目標**：技術展示用途，無 Yahoo 後台存取，展示「混合式 AI 推薦」前後端完整實作  
 > **架構原則**：前後端完全分離，各自獨立 Repo / CI / 部署；透過 OpenAPI Contract 同步型別
@@ -351,73 +351,72 @@ Shopping/                        # github.com/.../Shopping
 ### Shopping-backend（後端 Repo）
 
 ```
-Shopping-backend/                # github.com/.../Shopping-backend
-├── backend/                                    # ──── 獨立後端專案 ────
-│   ├── Controllers/
-│   │   ├── RecommendationsController.cs        # SSE endpoint
-│   │   └── ProductsController.cs
-│   ├── Services/
-│   │   ├── Abstractions/
-│   │   │   ├── ILlmService.cs
-│   │   │   └── IEmbeddingService.cs
-│   │   ├── Llm/
-│   │   │   ├── FakeLlmService.cs
-│   │   │   ├── OllamaLlmService.cs
-│   │   │   └── OpenAiLlmService.cs             # 預留，未實作
-│   │   ├── Embedding/
-│   │   │   ├── FakeEmbeddingService.cs
-│   │   │   └── OllamaEmbeddingService.cs
-│   │   └── RecommendationService.cs            # 兩階段 pipeline
-│   ├── Repositories/
-│   │   └── ProductRepository.cs               # pgvector 向量查詢
-│   ├── Models/
-│   │   ├── Product.cs
-│   │   ├── UserProfile.cs
-│   │   └── RecommendationResult.cs
-│   ├── Data/
-│   │   ├── AppDbContext.cs                     # EF Core DbContext
-│   │   └── Migrations/
-│   ├── Settings/
-│   │   ├── LlmSettings.cs
-│   │   └── EmbeddingSettings.cs
-│   ├── Scripts/
-│   │   ├── download-dataset.py                 # HuggingFace 資料下載
-│   │   ├── SeedData.cs                         # 植入 mock users + 購買記錄
-│   │   └── GenerateEmbeddings.cs               # 批次產生向量寫入 pgvector
-│   ├── appsettings.json                        # LlmProvider, DB, CORS 正式設定
-│   ├── appsettings.Development.json            # CORS AllowedOrigins: localhost:5173
-│   └── Shopping.Api.csproj
-└── .github/
-    └── workflows/
-        └── ci.yml               # dotnet test → build → docker push
+Shopping-backend/                # github.com/.../Shopping-backend  ← 專案根即 .csproj 層
+├── Controllers/
+│   ├── RecommendationsController.cs        # SSE endpoint
+│   └── ProductsController.cs
+├── Services/
+│   ├── Abstractions/
+│   │   ├── ILlmService.cs
+│   │   └── IEmbeddingService.cs
+│   ├── Llm/
+│   │   ├── FakeLlmService.cs
+│   │   ├── OllamaLlmService.cs
+│   │   └── OpenAiLlmService.cs             # 預留，未實作
+│   ├── Embedding/
+│   │   ├── FakeEmbeddingService.cs
+│   │   └── OllamaEmbeddingService.cs
+│   └── RecommendationService.cs            # 兩階段 pipeline 協調器
+├── Repositories/
+│   └── ProductRepository.cs               # pgvector 向量查詢
+├── Models/
+│   ├── Product.cs
+│   ├── UserProfile.cs
+│   └── RecommendationResult.cs
+├── Data/
+│   └── AppDbContext.cs                     # EF Core DbContext
+├── Migrations/                              # EF Core 實際輸出位置（專案根）
+│   ├── 20260401085625_InitialCreate.cs
+│   └── AppDbContextModelSnapshot.cs
+├── Settings/
+│   ├── LlmSettings.cs
+│   └── EmbeddingSettings.cs
+├── Scripts/
+│   ├── download-dataset.py                 # HuggingFace 資料下載（--source mock 可離線）
+│   ├── SeedData.cs                         # dotnet run -- seed：200 products + 3 users + 13 purchases
+│   ├── GenerateEmbeddings.cs               # dotnet run -- embed：批次 embed → pgvector
+│   └── products.json                       # 200 筆 mock Electronics 商品（已提交）
+├── Properties/
+│   └── launchSettings.json                 # 後端 Port 5000
+├── appsettings.json                        # LlmProvider: fake, DB Port: 5433, CORS
+├── appsettings.Development.json            # CORS AllowedOrigins: localhost:5173
+├── Program.cs                              # DI 工廠 + seed/embed CLI args
+└── Shopping.Api.csproj
 ```
 
 ### Shopping-frontend（前端 Repo）
 
 ```
-Shopping-frontend/               # github.com/.../Shopping-frontend
-├── frontend/                                   # ──── 獨立前端專案 ────
-│   ├── src/
-│   │   ├── api/
-│   │   │   └── client.ts                       # API base URL 統一入口
-│   │   ├── components/
-│   │   │   ├── ProductCard.tsx                 # 商品卡 + 打字機動畫
-│   │   │   ├── RecommendationSection.tsx       # Skeleton → 卡片列表
-│   │   │   └── UserProfileSwitcher.tsx         # Persona 切換按鈕
-│   │   ├── hooks/
-│   │   │   └── useRecommendations.ts           # SSE 消費 hook
-│   │   ├── pages/
-│   │   │   └── HomePage.tsx
-│   │   └── data/
-│   │       └── mockUsers.ts                    # 3 個 persona 定義
-│   ├── .env.development                        # VITE_API_BASE_URL=http://localhost:5000
-│   ├── .env.production                         # VITE_API_BASE_URL=https://...
-│   ├── .env.example                            # 範本，提交至 git
-│   ├── vite.config.ts                          # Proxy /api/* → localhost:5000
-│   └── package.json                            # gen:api script
-└── .github/
-    └── workflows/
-        └── ci.yml               # pnpm gen:api → pnpm build → deploy
+Shopping-frontend/               # github.com/.../Shopping-frontend  ← 專案根即 src/ 層
+├── src/
+│   ├── api/
+│   │   ├── schema.ts                       # openapi-typescript 自動產生，不手動編寫
+│   │   └── client.ts                       # API base URL 統一入口
+│   ├── components/
+│   │   ├── ProductCard.tsx                 # 商品卡 + 打字機動畫
+│   │   ├── RecommendationSection.tsx       # Skeleton → 卡片列表
+│   │   └── UserProfileSwitcher.tsx         # Persona 切換按鈕
+│   ├── hooks/
+│   │   └── useRecommendations.ts           # SSE 消費 hook
+│   ├── pages/
+│   │   └── HomePage.tsx
+│   └── data/
+│       └── mockUsers.ts                    # 3 個 persona 定義
+├── .env.development                        # VITE_API_BASE_URL=http://localhost:5000
+├── .env.production                         # VITE_API_BASE_URL=https://...
+├── .env.example                            # 範本，提交至 git
+├── vite.config.ts                          # Proxy /api/* → localhost:5000
+└── package.json                            # gen:api script
 ```
 
 ---
@@ -428,38 +427,39 @@ Shopping-frontend/               # github.com/.../Shopping-frontend
 -- pgvector 擴充
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- 商品資料表
-CREATE TABLE products (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    asin        VARCHAR(20) UNIQUE NOT NULL,
-    title       TEXT NOT NULL,
-    description TEXT,
-    category    VARCHAR(100),
-    price       NUMERIC(10, 2),
-    rating      NUMERIC(3, 2),
-    image_url   TEXT,
-    embedding   vector(768)       -- nomic-embed-text 768 維
+-- 商品資料表（EF Core 實際 Migration 欄位）
+CREATE TABLE "Products" (
+    "Id"          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "Title"       TEXT NOT NULL,
+    "Description" TEXT,
+    "Category"    VARCHAR(100),
+    "Price"       NUMERIC(10, 2),
+    "Rating"      NUMERIC(3, 2),
+    "ImageUrl"    TEXT,
+    "Embedding"   vector(768)       -- nomic-embed-text 768 維，FakeEmbeddingService 開發期使用固定種子向量
 );
 
--- 向量索引（cosine similarity，lists 值 = 商品數 / 1000）
-CREATE INDEX ON products USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 1);
+-- 向量索引（cosine similarity，lists=100 對應 ~200 筆資料規模）
+CREATE INDEX ON "Products" USING ivfflat ("Embedding" vector_cosine_ops)
+    WITH (lists = 100);
 
 -- 用戶資料表
-CREATE TABLE users (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name         VARCHAR(100) NOT NULL,
-    persona_tag  VARCHAR(50)         -- e.g. "tech-enthusiast"
+CREATE TABLE "Users" (
+    "Id"          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "Name"        VARCHAR(100) NOT NULL,
+    "PersonaTag"  VARCHAR(50)         -- e.g. "tech-enthusiast"
 );
 
 -- 購買記錄
-CREATE TABLE purchases (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id      UUID REFERENCES users(id),
-    product_id   UUID REFERENCES products(id),
-    purchased_at TIMESTAMPTZ DEFAULT now()
+CREATE TABLE "Purchases" (
+    "Id"          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "UserId"      UUID REFERENCES "Users"("Id"),
+    "ProductId"   UUID REFERENCES "Products"("Id"),
+    "PurchasedAt" TIMESTAMPTZ DEFAULT now()
 );
 ```
+
+> **注意**：EF Core 以 PascalCase 作為資料表與欄位名稱，實際 Migration 檔案位於 `Migrations/20260401085625_InitialCreate.cs`。
 
 ---
 
@@ -504,60 +504,60 @@ data: {}
 ### Phase 0：Repo 初始化與環境建置
 
 **Shopping（Infra）**
-- [ ] 保留 `docker-compose.yml`（PostgreSQL 16 + pgvector `ankane/pgvector`）
-- [ ] 更新 `docs/spec.md`（本文件）
+- [x] 保留 `docker-compose.yml`（PostgreSQL 16 + pgvector `ankane/pgvector`，host port **5433**）
+- [x] 更新 `docs/spec.md`（本文件）
 
 **Shopping-backend**
-- [ ] `gh repo create Shopping-backend --public` 建立後端 Repo
-- [ ] `dotnet new webapi -n Shopping.Api` 初始化專案
-- [ ] 安裝 NuGet：`Npgsql.EntityFrameworkCore.PostgreSQL`、`Pgvector.EntityFrameworkCore`、`Swashbuckle.AspNetCore`
-- [ ] 確認 `appsettings.Development.json` 加入 CORS `AllowedOrigins: ["http://localhost:5173"]`
-- [ ] 建立 `.github/workflows/ci.yml`（dotnet test → dotnet build）
+- [x] `gh repo create Shopping-backend --public` 建立後端 Repo
+- [x] `dotnet new webapi -n Shopping.Api` 初始化專案
+- [x] 安裝 NuGet：`Npgsql.EntityFrameworkCore.PostgreSQL`、`Pgvector.EntityFrameworkCore`、`Swashbuckle.AspNetCore`
+- [x] 確認 `appsettings.Development.json` 加入 CORS `AllowedOrigins: ["http://localhost:5173"]`
+- [x] 建立 `.github/workflows/ci.yml`（dotnet test → dotnet build）
 
 **Shopping-frontend**
-- [ ] `gh repo create Shopping-frontend --public` 建立前端 Repo
-- [ ] `pnpm create vite . -- --template react-ts` 初始化專案
-- [ ] 安裝依賴：`@microsoft/fetch-event-source`、`openapi-typescript`
-- [ ] 新增 `.env.development`（`VITE_API_BASE_URL=http://localhost:5000`）與 `.env.example`
-- [ ] `vite.config.ts` 設定 `/api/*` proxy + SSE 相容設定
-- [ ] `package.json` 新增 `gen:api` script
-- [ ] 建立 `.github/workflows/ci.yml`（pnpm gen:api → pnpm build）
+- [x] `gh repo create Shopping-frontend --public` 建立前端 Repo
+- [x] 手動建立所有前端檔案（React 19 + Vite 6 + TypeScript）
+- [x] 安裝依賴：`@microsoft/fetch-event-source`、`openapi-typescript`
+- [x] 新增 `.env.development`（`VITE_API_BASE_URL=http://localhost:5000`）與 `.env.example`
+- [x] `vite.config.ts` 設定 `/api/*` proxy + SSE 相容設定
+- [x] `package.json` 新增 `gen:api` script
+- [x] 建立 `.github/workflows/ci.yml`（pnpm gen:api → pnpm build）
 
 **本機工具**
-- [ ] Ollama 安裝：`ollama pull nomic-embed-text` + `ollama pull qwen2.5:7b`
+- [ ] Ollama 安裝：`ollama pull nomic-embed-text` + `ollama pull qwen2.5:7b`（Phase 5 前執行）
 
 ### Phase 1：LLM 抽象層（最優先，Shopping-backend）
 > ✅ 完成後前端可立即開發，不依賴 Ollama
 
-- [ ] 定義 `ILlmService` + `IEmbeddingService` 介面
-- [ ] 實作 `FakeLlmService`（固定 mock 資料 + 30ms / 字元 stream 模擬）
-- [ ] 實作 `FakeEmbeddingService`（固定種子向量）
-- [ ] `LlmSettings.cs` + `EmbeddingSettings.cs` Options 類別
-- [ ] `Program.cs` DI 工廠注冊 + CORS middleware 注冊
+- [x] 定義 `ILlmService` + `IEmbeddingService` 介面
+- [x] 實作 `FakeLlmService`（固定 mock 資料 + 30ms / 字元 stream 模擬）
+- [x] 實作 `FakeEmbeddingService`（固定種子向量）
+- [x] `LlmSettings.cs` + `EmbeddingSettings.cs` Options 類別
+- [x] `Program.cs` DI 工廠注冊 + CORS middleware 注冊
 
 ### Phase 2：資料準備（可與 Phase 1 平行，Shopping-backend）
-- [ ] `Scripts/download-dataset.py`（HuggingFace Electronics 取樣 200 筆 → `products.json`）
-- [ ] EF Core Migration（建立 `products`、`users`、`purchases` table）
-- [ ] `Scripts/SeedData.cs`（3 個 mock user + 各 3–5 筆購買記錄）
-- [ ] `Scripts/GenerateEmbeddings.cs`（批次 embed → 寫入 pgvector）
+- [x] `Scripts/download-dataset.py`（HuggingFace Electronics 取樣 200 筆 → `products.json`；`--source mock` 可離線）
+- [x] EF Core Migration（建立 `Products`、`Users`、`Purchases` 資料表 + ivfflat index）
+- [x] `Scripts/SeedData.cs`（`dotnet run -- seed`：3 個 mock user + 13 筆購買記錄 + 200 products）
+- [x] `Scripts/GenerateEmbeddings.cs`（`dotnet run -- embed`：batch 20，200 筆向量寫入 pgvector）
 
 ### Phase 3：後端核心服務（depends on Phase 1 + 2，Shopping-backend）
-- [ ] `Repositories/ProductRepository.cs`（EF Core + `<=>` cosine distance 向量查詢）
-- [ ] `Services/Embedding/OllamaEmbeddingService.cs`（HttpClient → Ollama embed API）
-- [ ] `Services/Llm/OllamaLlmService.cs`（HttpClient streaming → `IAsyncEnumerable<string>`）
-- [ ] `Services/RecommendationService.cs`（兩階段 pipeline 協調器）
-- [ ] `Controllers/RecommendationsController.cs`（SSE endpoint）
-- [ ] `Controllers/ProductsController.cs`（商品列表）
+- [x] `Repositories/ProductRepository.cs`（EF Core + `<=>` cosine distance 向量查詢）
+- [x] `Services/Embedding/OllamaEmbeddingService.cs`（HttpClient → Ollama embed API）
+- [x] `Services/Llm/OllamaLlmService.cs`（HttpClient streaming → `IAsyncEnumerable<string>`）
+- [x] `Services/RecommendationService.cs`（兩階段 pipeline 協調器）
+- [x] `Controllers/RecommendationsController.cs`（SSE endpoint）
+- [x] `Controllers/ProductsController.cs`（商品列表）
 
 ### Phase 4：前端展示（depends on Phase 1，不需等 Phase 3，Shopping-frontend）
-- [ ] 執行 `pnpm gen:api` 從後端產生 `src/api/schema.ts`（需後端已啟動）
-- [ ] `api/client.ts`（import `schema.ts` 型別，讀取 `VITE_API_BASE_URL` 作為統一入口）
-- [ ] `data/mockUsers.ts`（3 個 persona：科技達人 / 居家主義 / 運動愛好者）
-- [ ] `hooks/useRecommendations.ts`（`@microsoft/fetch-event-source` SSE hook，endpoint 使用 `client.ts`）
-- [ ] `components/ProductCard.tsx`（商品圖、標題、價格、星評 + 打字機 AI 說明）
-- [ ] `components/UserProfileSwitcher.tsx`（切換 persona 按鈕）
-- [ ] `components/RecommendationSection.tsx`（Skeleton loading → 卡片列表）
-- [ ] `pages/HomePage.tsx`（Yahoo 風格標題列 + 推薦區塊組合）
+- [x] 執行 `pnpm gen:api` 從後端產生 `src/api/schema.ts`（需後端已啟動）
+- [x] `api/client.ts`（import `schema.ts` 型別，讀取 `VITE_API_BASE_URL` 作為統一入口）
+- [x] `data/mockUsers.ts`（3 個 persona：科技達人 / 居家主義 / 運動愛好者）
+- [x] `hooks/useRecommendations.ts`（`@microsoft/fetch-event-source` SSE hook，endpoint 使用 `client.ts`）
+- [x] `components/ProductCard.tsx`（商品圖、標題、價格、星評 + 打字機 AI 說明）
+- [x] `components/UserProfileSwitcher.tsx`（切換 persona 按鈕）
+- [x] `components/RecommendationSection.tsx`（Skeleton loading → 卡片列表）
+- [x] `pages/HomePage.tsx`（Yahoo 風格標題列 + 推薦區塊組合）
 
 ### Phase 5：整合 + Demo 優化（depends on Phase 3 + 4，跨 Repo）
 - [ ] 切換 `appsettings.json` → `Provider: ollama`，驗證真實 Ollama 推薦品質
@@ -598,5 +598,17 @@ data: {}
 | **Embedding 也有 Fake 實作** | 在無 Ollama 的 CI 環境能驗證 DB schema 與查詢邏輯 |
 | **OpenAiLlmService 預留不實作** | 保留擴充點；若 Demo 後需雲端部署，只需填入 API Key 並實作此類別 |
 | **選用 qwen2.5:7b** | 中文推薦理由品質優於 llama3，本機 7B 約需 6GB RAM/VRAM |
+
+### 2026-04-01：PostgreSQL host port 改為 5433
+
+- **原因**：本機已有 `postgres_tranning` 容器佔用 port 5432，衝突導致 `docker compose up` 失敗
+- **決策**：`docker-compose.yml` ports 改為 `"5433:5432"`（container 內仍是 5432）
+- **影響**：`appsettings.json` 連線字串同步更新為 `Port=5433`；開發者 `.env` 需確認一致
+
+### 2026-04-01：launchSettings.json 後端 port 修正為 5000
+
+- **原因**：`dotnet new webapi` 產生的預設 port 為 5218，與 spec 設計（5000）及 Vite proxy target 不符
+- **決策**：`Properties/launchSettings.json` 中 `http` 與 `https` profile 兩處 URL 均改為 `localhost:5000`
+- **影響**：前端 `vite.config.ts` proxy target `http://localhost:5000` 對齊無需修改
 | **選用 nomic-embed-text** | 768 維、多語言支援、Ollama 官方模型庫收錄 |
 | **選用 ivfflat index** | 200 筆商品量級，ivfflat 效能足夠；量級達萬筆以上改用 hnsw |
