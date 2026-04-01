@@ -1,7 +1,7 @@
 # Yahoo Shopping AI 推薦 Demo — 系統規格書
 
-> **版本**：v1.3  
-> **日期**：2026-04-01  
+> **版本**：v1.4  
+> **日期**：2026-04-02  
 > **目標**：技術展示用途，無 Yahoo 後台存取，展示「混合式 AI 推薦」前後端完整實作  
 > **架構原則**：前後端完全分離，各自獨立 Repo / CI / 部署；透過 OpenAPI Contract 同步型別
 
@@ -560,10 +560,14 @@ data: {}
 - [x] `pages/HomePage.tsx`（Yahoo 風格標題列 + 推薦區塊組合）
 
 ### Phase 5：整合 + Demo 優化（depends on Phase 3 + 4，跨 Repo）
-- [ ] 切換 `appsettings.json` → `Provider: ollama`，驗證真實 Ollama 推薦品質
-- [ ] Prompt 微調（qwen2.5:7b 中文推薦理由格式與品質）
-- [ ] 動畫細節：卡片淡入、切換 persona 的 fade-out / fade-in
-- [ ] Error handling：Ollama 未啟動時顯示友善提示
+- [x] 切換 `appsettings.Development.json` → `Provider: ollama`（ Embedding + LLM 雙切換），驗證真實推薦品質
+- [x] 清除 Fake 向量，以 `dotnet run -- embed` 批次重新生成 200 筆 nomic-embed-text（768-dim）真實向量
+- [x] 驗證端到端：`user-tech` → 向量召回 ASUS Gaming 顯示器 + Razer 耳機，qwen2.5:7b 繁體中文 reasoning 正確串流，`event: done` 完整收到
+- [x] 動畫細節：ProductCard staggered fade-slide-in（`animationDelay`）、hover 懸浮效果、persona 切換 section key-reset fade
+- [x] 兩階段 Loading UX：Stage 1 spinner（等待商品）→ Skeleton cards；Stage 2 spinner（等待 LLM reasoning）→ 串流打字機游標
+- [x] Error handling：Ollama 離線時顯示友善提示面板，區分連線错誤與後端錯誤
+
+> **效能備注（CPU-only 環境）**：Ollama Docker 容器無 GPU passthrough。nomic-embed-text 查詢 ~21s，qwen2.5:7b 首個 token ~88s。前端透過兩階段 spinner 讓等待可視化；若需加速可配置 GPU passthrough 或切換 OpenAI provider。
 
 ---
 
