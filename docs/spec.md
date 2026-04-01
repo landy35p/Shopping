@@ -1,9 +1,9 @@
 # Yahoo Shopping AI 推薦 Demo — 系統規格書
 
-> **版本**：v1.1  
+> **版本**：v1.2  
 > **日期**：2026-04-01  
 > **目標**：技術展示用途，無 Yahoo 後台存取，展示「混合式 AI 推薦」前後端完整實作  
-> **架構原則**：前後端完全分離，獨立啟動、獨立部署，僅透過 HTTP API 溝通
+> **架構原則**：前後端完全分離，各自獨立 Repo / CI / 部署；透過 OpenAPI Contract 同步型別
 
 ---
 
@@ -12,14 +12,15 @@
 1. [專案目標](#1-專案目標)
 2. [技術決策](#2-技術決策)
 3. [系統架構](#3-系統架構)
-4. [前後端分離設計](#4-前後端分離設計)
-5. [LLM 抽象層設計](#5-llm-抽象層設計-核心)
-6. [目錄結構](#6-目錄結構)
-7. [資料庫 Schema](#7-資料庫-schema)
-8. [API 規格](#8-api-規格)
-9. [實作 Phases](#9-實作-phases)
-10. [驗收標準](#10-驗收標準)
-11. [決策記錄](#11-決策記錄)
+4. [Repo 管理策略](#4-repo-管理策略)
+5. [前後端分離設計](#5-前後端分離設計)
+6. [LLM 抽象層設計](#6-llm-抽象層設計-核心)
+7. [目錄結構](#7-目錄結構)
+8. [資料庫 Schema](#8-資料庫-schema)
+9. [API 規格](#9-api-規格)
+10. [實作 Phases](#10-實作-phases)
+11. [驗收標準](#11-驗收標準)
+12. [決策記錄](#12-決策記錄)
 
 ---
 
@@ -38,9 +39,13 @@ Demo 情境為首頁「為你推薦」個人化區塊，可切換 3 個不同 pe
 
 | 層次 | 技術選擇 | 版本 / 說明 |
 |------|---------|------------|
+| **Frontend Repo** | `Shopping-frontend` | React + Vite + TypeScript，獨立 Repo / CI / 部署 |
+| **Backend Repo** | `Shopping-backend` | ASP.NET Core 8 Web API，獨立 Repo / CI / 部署 |
+| **Infra Repo** | `Shopping`（現有） | `docker-compose.yml` + 全局文件，本機開發共用基礎設施 |
 | **Frontend** | React + Vite + TypeScript | 獨立啟動，Port `5173`，SSE 消費使用 `@microsoft/fetch-event-source` |
 | **Frontend Dev Proxy** | Vite Proxy | 開發期間代理 `/api/*` → `http://localhost:5000`，迴避 CORS |
 | **Frontend 環境設定** | `.env` 檔 | `VITE_API_BASE_URL` 區分 dev / prod |
+| **API Contract** | `openapi-typescript` | 從後端 Swagger 自動產生前端 TypeScript 型別，防止型別漂移 |
 | **Backend** | ASP.NET Core Web API | 獨立啟動，Port `5000`，.NET 8 LTS |
 | **Backend CORS** | `builder.Services.AddCors()` | 開發允許 `localhost:5173`；正式設定白名單 |
 | **ORM** | Entity Framework Core + Npgsql | `Npgsql.EntityFrameworkCore.PostgreSQL` |
@@ -55,42 +60,126 @@ Demo 情境為首頁「為你推薦」個人化區塊，可切換 3 個不同 pe
 
 ## 3. 系統架構
 
+### Repo 關係
+
 ```
-┌──────────────────────────────────────────────────┐
-│  Frontend  (React + Vite)  :5173                  │
-│  ┌─────────────────────────────────────────────┐  │
-│  │  UserProfileSwitcher                        │  │
-│  │  RecommendationSection                      │  │
-│  │    └─ ProductCard × 5（打字機串流說明）      │  │
-│  └──────────────┬──────────────────────────────┘  │
-│  開發期 Vite Proxy│/api/* → localhost:5000           │
-│  正式期 直接呼叫  │VITE_API_BASE_URL                  │
-└─────────────────┼────────────────────────────────┘
-                  │ HTTP / SSE
-                  ▼
-┌──────────────────────────────────────────────────┐
-│  Backend  (ASP.NET Core 8)  :5000                 │
-│  CORS 白名單: localhost:5173                       │
-│  ┌─────────────────────────────────────────────┐  │
-│  │  GET /api/recommendations/stream?userId={}  │  │
-│  │    RecommendationService                    │  │
-│  │      Stage 1: IEmbeddingService             │  │
-│  │        → pgvector 召回 Top-20  (< 50ms)     │  │
-│  │      Stage 2: ILlmService streaming         │  │
-│  │        → SSE 串流至前端        (1~3s)        │  │
-│  └─────────────────────────────────────────────┘  │
-│  DI: LlmProvider = fake | ollama | openai          │
-└──────────────────┬───────────────────────────────┘
-                   │
-       ┌───────────┴────────────┐
-       ▼                        ▼
-  PostgreSQL + pgvector      Ollama :11434
-  (Docker)                   (本地，fake 模式可不啟動)
+GitHub
+├── Shopping              ← Infra Repo（docker-compose + 全局文件）
+├── Shopping-backend      ← 後端 Repo（ASP.NET Core 8）
+└── Shopping-frontend     ← 前端 Repo（React + Vite）
+```
+
+### 執行期通訊
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Shopping-frontend  (React + Vite)  :5173                 │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │  UserProfileSwitcher                              │   │
+│  │  RecommendationSection                            │   │
+│  │    └─ ProductCard × 5（打字機串流說明）            │   │
+│  └────────────────────┬──────────────────────────────┘   │
+│  開發期 Vite Proxy     │ /api/* → localhost:5000           │
+│  正式期 直接呼叫       │ VITE_API_BASE_URL                 │
+└────────────────────────┼─────────────────────────────────┘
+                         │ HTTP / SSE
+                         ▼
+┌──────────────────────────────────────────────────────────┐
+│  Shopping-backend  (ASP.NET Core 8)  :5000                │
+│  CORS 白名單: localhost:5173                              │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │  GET /api/recommendations/stream?userId={}        │   │
+│  │    RecommendationService                          │   │
+│  │      Stage 1: IEmbeddingService                   │   │
+│  │        → pgvector 召回 Top-20  (< 50ms)           │   │
+│  │      Stage 2: ILlmService streaming               │   │
+│  │        → SSE 串流至前端        (1~3s)              │   │
+│  └───────────────────────────────────────────────────┘   │
+│  Swagger → openapi.json  ←── 前端執行 pnpm gen:api 取用   │
+│  DI: LlmProvider = fake | ollama | openai                 │
+└────────────────────────┬─────────────────────────────────┘
+                         │
+             ┌───────────┴────────────┐
+             ▼                        ▼
+        PostgreSQL + pgvector      Ollama :11434
+        (Shopping Infra / Docker)  (本地，fake 模式可不啟動)
 ```
 
 ---
 
-## 4. 前後端分離設計
+## 4. Repo 管理策略
+
+### 三個 Repo 的職責
+
+| Repo | 用途 | 獨立 CI |
+|------|------|--------|
+| `Shopping` | `docker-compose.yml`、全局文件（`docs/spec.md`）、開發環境說明 | ❌（純基礎設施）|
+| `Shopping-backend` | ASP.NET Core 8 API、EF Core Migration、資料 Scripts | ✅ dotnet test → build → deploy |
+| `Shopping-frontend` | React + Vite + TypeScript 前端 | ✅ pnpm build → deploy |
+
+### API Contract 同步流程（防止型別漂移）
+
+```
+Shopping-backend
+  Swashbuckle 自動產生
+       ↓
+  GET http://localhost:5000/swagger/v1/swagger.json
+       ↓  pnpm gen:api（Shopping-frontend 中執行）
+  src/api/schema.ts   ← 自動產生，不手動編寫
+       ↓
+  src/api/client.ts   ← import 型別，呼叫 API
+       ↓
+  TypeScript 編譯     ← 後端改 schema → 前端編譯報錯，立即發現
+```
+
+```jsonc
+// Shopping-frontend/package.json
+{
+  "scripts": {
+    "gen:api": "openapi-typescript http://localhost:5000/swagger/v1/swagger.json -o src/api/schema.ts"
+  }
+}
+```
+
+### 各自 CI/CD 管道
+
+**Shopping-backend** `.github/workflows/ci.yml`
+```
+push to main
+  → dotnet test
+  → dotnet build --configuration Release
+  → docker build & push (ghcr.io/...)
+```
+
+**Shopping-frontend** `.github/workflows/ci.yml`
+```
+push to main
+  → pnpm install
+  → pnpm gen:api  (需後端已部署，從正式 URL 拉 openapi.json)
+  → pnpm build    (TypeScript 編譯，型別不符直接失敗)
+```
+
+### 本機開發啟動順序
+
+```powershell
+# ① 啟動 DB（Shopping Infra Repo）
+cd Shopping
+docker compose up -d
+
+# ② 啟動後端（Shopping-backend）
+cd Shopping-backend
+dotnet run
+# → :5000，swagger 自動產生 openapi.json
+
+# ③ 同步 API 型別後啟動前端（Shopping-frontend）
+cd Shopping-frontend
+pnpm gen:api      # 從 localhost:5000 拉取最新 schema
+pnpm dev          # → :5173
+```
+
+---
+
+## 5. 前後端分離設計
 
 ### 通訊方式
 
@@ -178,7 +267,7 @@ pnpm dev
 
 ---
 
-## 5. LLM 抽象層設計（核心）
+## 6. LLM 抽象層設計（核心）
 
 ### 介面定義
 
@@ -248,10 +337,21 @@ builder.Services.AddSingleton<ILlmService>(llmProvider switch
 
 ---
 
-## 6. 目錄結構
+## 7. 目錄結構
+
+### Shopping（Infra Repo）
 
 ```
-Shopping/                                       # Repo 根目錄
+Shopping/                        # github.com/.../Shopping
+├── docker-compose.yml           # PostgreSQL 16 + pgvector
+└── docs/
+    └── spec.md                  # 本文件
+```
+
+### Shopping-backend（後端 Repo）
+
+```
+Shopping-backend/                # github.com/.../Shopping-backend
 ├── backend/                                    # ──── 獨立後端專案 ────
 │   ├── Controllers/
 │   │   ├── RecommendationsController.cs        # SSE endpoint
@@ -287,7 +387,15 @@ Shopping/                                       # Repo 根目錄
 │   ├── appsettings.json                        # LlmProvider, DB, CORS 正式設定
 │   ├── appsettings.Development.json            # CORS AllowedOrigins: localhost:5173
 │   └── Shopping.Api.csproj
-│
+└── .github/
+    └── workflows/
+        └── ci.yml               # dotnet test → build → docker push
+```
+
+### Shopping-frontend（前端 Repo）
+
+```
+Shopping-frontend/               # github.com/.../Shopping-frontend
 ├── frontend/                                   # ──── 獨立前端專案 ────
 │   ├── src/
 │   │   ├── api/
@@ -306,16 +414,15 @@ Shopping/                                       # Repo 根目錄
 │   ├── .env.production                         # VITE_API_BASE_URL=https://...
 │   ├── .env.example                            # 範本，提交至 git
 │   ├── vite.config.ts                          # Proxy /api/* → localhost:5000
-│   └── package.json
-│
-├── docker-compose.yml                          # PostgreSQL 16 + pgvector
-└── docs/
-    └── spec.md                                 # 本文件
+│   └── package.json                            # gen:api script
+└── .github/
+    └── workflows/
+        └── ci.yml               # pnpm gen:api → pnpm build → deploy
 ```
 
 ---
 
-## 7. 資料庫 Schema
+## 8. 資料庫 Schema
 
 ```sql
 -- pgvector 擴充
@@ -356,7 +463,7 @@ CREATE TABLE purchases (
 
 ---
 
-## 8. API 規格
+## 9. API 規格
 
 ### `GET /api/recommendations/stream`
 
@@ -392,19 +499,34 @@ data: {}
 
 ---
 
-## 9. 實作 Phases
+## 10. 實作 Phases
 
-### Phase 0：環境建置
-- [ ] `docker-compose.yml`（PostgreSQL 16 + pgvector `ankane/pgvector`）
-- [ ] `cd backend && dotnet new webapi -n Shopping.Api` 初始化後端專案
-- [ ] 安裝 NuGet：`Npgsql.EntityFrameworkCore.PostgreSQL`、`Pgvector.EntityFrameworkCore`
-- [ ] 後端 `appsettings.Development.json` 加入 CORS `AllowedOrigins: ["http://localhost:5173"]`
-- [ ] `cd frontend && pnpm create vite . -- --template react-ts` 初始化前端
-- [ ] 前端新增 `.env.development`（`VITE_API_BASE_URL=http://localhost:5000`）與 `.env.example`
-- [ ] 前端 `vite.config.ts` 設定 `/api/*` proxy + SSE 相容設定
+### Phase 0：Repo 初始化與環境建置
+
+**Shopping（Infra）**
+- [ ] 保留 `docker-compose.yml`（PostgreSQL 16 + pgvector `ankane/pgvector`）
+- [ ] 更新 `docs/spec.md`（本文件）
+
+**Shopping-backend**
+- [ ] `gh repo create Shopping-backend --public` 建立後端 Repo
+- [ ] `dotnet new webapi -n Shopping.Api` 初始化專案
+- [ ] 安裝 NuGet：`Npgsql.EntityFrameworkCore.PostgreSQL`、`Pgvector.EntityFrameworkCore`、`Swashbuckle.AspNetCore`
+- [ ] 確認 `appsettings.Development.json` 加入 CORS `AllowedOrigins: ["http://localhost:5173"]`
+- [ ] 建立 `.github/workflows/ci.yml`（dotnet test → dotnet build）
+
+**Shopping-frontend**
+- [ ] `gh repo create Shopping-frontend --public` 建立前端 Repo
+- [ ] `pnpm create vite . -- --template react-ts` 初始化專案
+- [ ] 安裝依賴：`@microsoft/fetch-event-source`、`openapi-typescript`
+- [ ] 新增 `.env.development`（`VITE_API_BASE_URL=http://localhost:5000`）與 `.env.example`
+- [ ] `vite.config.ts` 設定 `/api/*` proxy + SSE 相容設定
+- [ ] `package.json` 新增 `gen:api` script
+- [ ] 建立 `.github/workflows/ci.yml`（pnpm gen:api → pnpm build）
+
+**本機工具**
 - [ ] Ollama 安裝：`ollama pull nomic-embed-text` + `ollama pull qwen2.5:7b`
 
-### Phase 1：LLM 抽象層（最優先）
+### Phase 1：LLM 抽象層（最優先，Shopping-backend）
 > ✅ 完成後前端可立即開發，不依賴 Ollama
 
 - [ ] 定義 `ILlmService` + `IEmbeddingService` 介面
@@ -413,13 +535,13 @@ data: {}
 - [ ] `LlmSettings.cs` + `EmbeddingSettings.cs` Options 類別
 - [ ] `Program.cs` DI 工廠注冊 + CORS middleware 注冊
 
-### Phase 2：資料準備（可與 Phase 1 平行）
+### Phase 2：資料準備（可與 Phase 1 平行，Shopping-backend）
 - [ ] `Scripts/download-dataset.py`（HuggingFace Electronics 取樣 200 筆 → `products.json`）
 - [ ] EF Core Migration（建立 `products`、`users`、`purchases` table）
 - [ ] `Scripts/SeedData.cs`（3 個 mock user + 各 3–5 筆購買記錄）
 - [ ] `Scripts/GenerateEmbeddings.cs`（批次 embed → 寫入 pgvector）
 
-### Phase 3：後端核心服務（depends on Phase 1 + 2）
+### Phase 3：後端核心服務（depends on Phase 1 + 2，Shopping-backend）
 - [ ] `Repositories/ProductRepository.cs`（EF Core + `<=>` cosine distance 向量查詢）
 - [ ] `Services/Embedding/OllamaEmbeddingService.cs`（HttpClient → Ollama embed API）
 - [ ] `Services/Llm/OllamaLlmService.cs`（HttpClient streaming → `IAsyncEnumerable<string>`）
@@ -427,8 +549,9 @@ data: {}
 - [ ] `Controllers/RecommendationsController.cs`（SSE endpoint）
 - [ ] `Controllers/ProductsController.cs`（商品列表）
 
-### Phase 4：前端展示（depends on Phase 1，不需等 Phase 3）
-- [ ] `api/client.ts`（讀取 `import.meta.env.VITE_API_BASE_URL` 作為 API 統一入口）
+### Phase 4：前端展示（depends on Phase 1，不需等 Phase 3，Shopping-frontend）
+- [ ] 執行 `pnpm gen:api` 從後端產生 `src/api/schema.ts`（需後端已啟動）
+- [ ] `api/client.ts`（import `schema.ts` 型別，讀取 `VITE_API_BASE_URL` 作為統一入口）
 - [ ] `data/mockUsers.ts`（3 個 persona：科技達人 / 居家主義 / 運動愛好者）
 - [ ] `hooks/useRecommendations.ts`（`@microsoft/fetch-event-source` SSE hook，endpoint 使用 `client.ts`）
 - [ ] `components/ProductCard.tsx`（商品圖、標題、價格、星評 + 打字機 AI 說明）
@@ -436,7 +559,7 @@ data: {}
 - [ ] `components/RecommendationSection.tsx`（Skeleton loading → 卡片列表）
 - [ ] `pages/HomePage.tsx`（Yahoo 風格標題列 + 推薦區塊組合）
 
-### Phase 5：整合 + Demo 優化（depends on Phase 3 + 4）
+### Phase 5：整合 + Demo 優化（depends on Phase 3 + 4，跨 Repo）
 - [ ] 切換 `appsettings.json` → `Provider: ollama`，驗證真實 Ollama 推薦品質
 - [ ] Prompt 微調（qwen2.5:7b 中文推薦理由格式與品質）
 - [ ] 動畫細節：卡片淡入、切換 persona 的 fade-out / fade-in
@@ -444,7 +567,7 @@ data: {}
 
 ---
 
-## 10. 驗收標準
+## 11. 驗收標準
 
 | # | 測試項目 | 預期結果 |
 |---|---------|---------|
@@ -456,14 +579,18 @@ data: {}
 | 6 | Ollama 未啟動（`Provider=ollama`） | 顯示友善錯誤訊息，不顯示技術例外錯誤 |
 | 7 | 前端直接存取 `:5000/api/*`（不透過 proxy） | 後端 CORS 正確拒絕或接受（依 origin 白名單） |
 | 8 | 前後端分別獨立啟動關閉 | 互不影響，後端停止時前端顯示 loading/error 狀態 |
+| 9 | 後端修改 response schema 後執行 `pnpm gen:api` | `schema.ts` 自動更新，前端使用舊型別處 TypeScript 編譯報錯 |
+| 10 | Shopping-backend CI push | dotnet test + build 通過，與前端 Repo 完全獨立 |
 
 ---
 
-## 11. 決策記錄
+## 12. 決策記錄
 
 | 決策 | 理由 |
 |------|------|
+| **3 Repo 方案** | 模擬真實企業架構：前後端各自獨立 CI/CD；Infra repo 統一管理本機開發 DB 環境，不污染業務 code |
 | **前後端完全分離** | 獨立啟動、獨立維護；未來可各自部署到不同服務（Vercel + Azure App Service）不需改動程式碼 |
+| **openapi-typescript codegen** | 取代手寫 API 型別；後端改 schema → 前端 `gen:api` → TypeScript 編譯報錯，比 runtime 錯誤早發現 |
 | **開發期用 Vite Proxy** | 前端開發時不需設定 CORS，proxy 讓前端程式碼只寫 `/api/*` 路徑即可；切換環境僅改 `.env` 檔 |
 | **`api/client.ts` 統一入口** | 所有 API 呼叫都從此處讀取 `VITE_API_BASE_URL`，日後更換 base URL 只需改一處 |
 | **Vite Proxy 針對 SSE 關閉 compression** | SSE 需要逐塊傳輸，啟用 gzip 會導致緩衝後一次性送出，破壞即時串流效果 |
