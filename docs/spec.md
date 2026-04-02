@@ -614,5 +614,12 @@ data: {}
 - **原因**：`dotnet new webapi` 產生的預設 port 為 5218，與 spec 設計（5000）及 Vite proxy target 不符
 - **決策**：`Properties/launchSettings.json` 中 `http` 與 `https` profile 兩處 URL 均改為 `localhost:5000`
 - **影響**：前端 `vite.config.ts` proxy target `http://localhost:5000` 對齊無需修改
+
+### 2026-04-02：Ollama HttpClient Timeout 延長為 10 分鐘
+
+- **原因**：`HttpClient` 預設 Timeout = 100 秒；CPU-only 環境下 `qwen2.5:7b` 首個 token 耗時超過 100 秒，導致 `TaskCanceledException`，前端永久卡在「AI 正在生成個性化推薦說明」
+- **決策**：`Program.cs` 改用命名 HttpClient `"ollama"`，設定 `Timeout = TimeSpan.FromMinutes(10)`；LLM 與 Embedding 服務均改用此命名 client
+- **影響**：僅影響 `Provider=ollama` 情境；`fake` 模式不受影響
+
 | **選用 nomic-embed-text** | 768 維、多語言支援、Ollama 官方模型庫收錄 |
 | **選用 ivfflat index** | 200 筆商品量級，ivfflat 效能足夠；量級達萬筆以上改用 hnsw |
