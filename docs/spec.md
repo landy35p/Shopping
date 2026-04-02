@@ -489,6 +489,27 @@ event: done
 data: {}
 ```
 
+### `GET /api/recommendations/stream/search`
+
+| 項目 | 內容 |
+|------|------|
+| 說明 | 根據使用者自由輸入的關鍵字 / 喜好描述，Embedding 後向量召回 Top-5 商品，再串流 AI 推薦說明 |
+| Query Params | `prompt: string`（必填，URL encoded） |
+| Response Headers | `Content-Type: text/event-stream` |
+| Response Format | Server-Sent Events（格式同 `/stream`） |
+
+**SSE 事件格式：（同 `/stream`）**
+```
+event: product
+data: {"id":"...","title":"...","price":99.99,"rating":4.5,"imageUrl":"..."}
+
+event: reasoning
+data: {"text":"根據您的搜尋「電競滑鼠」，推薦..."}
+
+event: done
+data: {}
+```
+
 ### `GET /api/products`
 
 | 項目 | 內容 |
@@ -544,20 +565,20 @@ data: {}
 ### Phase 3：後端核心服務（depends on Phase 1 + 2，Shopping-backend）
 - [x] `Repositories/ProductRepository.cs`（EF Core + `<=>` cosine distance 向量查詢）
 - [x] `Services/Embedding/OllamaEmbeddingService.cs`（HttpClient → Ollama embed API）
-- [x] `Services/Llm/OllamaLlmService.cs`（HttpClient streaming → `IAsyncEnumerable<string>`）
-- [x] `Services/RecommendationService.cs`（兩階段 pipeline 協調器）
-- [x] `Controllers/RecommendationsController.cs`（SSE endpoint）
+- [x] `Services/Llm/OllamaLlmService.cs`（HttpClient streaming → `IAsyncEnumerable<string>`，含 `StreamRecommendationsByPromptAsync`）
+- [x] `Services/RecommendationService.cs`（兩階段 pipeline 協調器，含 `StreamByPromptAsync` prompt 模式）
+- [x] `Controllers/RecommendationsController.cs`（SSE endpoint：`/stream` userId 模式 + `/stream/search` prompt 模式）
 - [x] `Controllers/ProductsController.cs`（商品列表）
 
 ### Phase 4：前端展示（depends on Phase 1，不需等 Phase 3，Shopping-frontend）
 - [x] 執行 `pnpm gen:api` 從後端產生 `src/api/schema.ts`（需後端已啟動）
 - [x] `api/client.ts`（import `schema.ts` 型別，讀取 `VITE_API_BASE_URL` 作為統一入口）
 - [x] `data/mockUsers.ts`（3 個 persona：科技達人 / 居家主義 / 運動愛好者）
-- [x] `hooks/useRecommendations.ts`（`@microsoft/fetch-event-source` SSE hook，endpoint 使用 `client.ts`）
+- [x] `hooks/useRecommendations.ts`（`@microsoft/fetch-event-source` SSE hook，含 `fetch`（userId 模式）與 `fetchByPrompt`（prompt 模式）兩個觸發方法）
 - [x] `components/ProductCard.tsx`（商品圖、標題、價格、星評 + 打字機 AI 說明）
 - [x] `components/UserProfileSwitcher.tsx`（切換 persona 按鈕）
 - [x] `components/RecommendationSection.tsx`（Skeleton loading → 卡片列表）
-- [x] `pages/HomePage.tsx`（Yahoo 風格標題列 + 推薦區塊組合）
+- [x] `pages/HomePage.tsx`（Yahoo 風格標題列 + Tab 模式切換：「👤 個人化推薦」/ 「🔍 關鍵字搜尋」）
 
 ### Phase 5：整合 + Demo 優化（depends on Phase 3 + 4，跨 Repo）
 - [x] 切換 `appsettings.Development.json` → `Provider: ollama`（ Embedding + LLM 雙切換），驗證真實推薦品質
@@ -566,6 +587,7 @@ data: {}
 - [x] 動畫細節：ProductCard staggered fade-slide-in（`animationDelay`）、hover 懸浮效果、persona 切換 section key-reset fade
 - [x] 兩階段 Loading UX：Stage 1 spinner（等待商品）→ Skeleton cards；Stage 2 spinner（等待 LLM reasoning）→ 串流打字機游標
 - [x] Error handling：Ollama 離線時顯示友善提示面板，區分連線错誤與後端錯誤
+- [x] 關鍵字搜尋模式：前端 Tab 切換「👤 個人化推薦」/ 「🔍 關鍵字搜尋」；後端新增 `GET /api/recommendations/stream/search?prompt=` 端點，對輸入文字 Embedding 後向量召回 Top-5 商品再 LLM 串流說明
 
 > **效能備注（CPU-only 環境）**：Ollama Docker 容器無 GPU passthrough。nomic-embed-text 查詢 ~21s，qwen2.5:7b 首個 token ~88s。前端透過兩階段 spinner 讓等待可視化；若需加速可配置 GPU passthrough 或切換 OpenAI provider。
 
@@ -585,6 +607,9 @@ data: {}
 | 8 | 前後端分別獨立啟動關閉 | 互不影響，後端停止時前端顯示 loading/error 狀態 |
 | 9 | 後端修改 response schema 後執行 `pnpm gen:api` | `schema.ts` 自動更新，前端使用舊型別處 TypeScript 編譯報錯 |
 | 10 | Shopping-backend CI push | dotnet test + build 通過，與前端 Repo 完全獨立 |
+| 11 | 關鍵字搜尋模式輸入「電競滑鼠」 | 向量召回相關商品，AI 串流說明含搜尋關鍵字脈絡 |
+| 12 | 搜尋模式與個人化模式 Tab 切換 | 各自保有獨立推薦結果，互不干擾 |
+| 13 | prompt 為空時按下搜尋 | 按鈕 disabled，不發送請求 |
 
 ---
 
@@ -614,6 +639,16 @@ data: {}
 - **原因**：`dotnet new webapi` 產生的預設 port 為 5218，與 spec 設計（5000）及 Vite proxy target 不符
 - **決策**：`Properties/launchSettings.json` 中 `http` 與 `https` profile 兩處 URL 均改為 `localhost:5000`
 - **影響**：前端 `vite.config.ts` proxy target `http://localhost:5000` 對齊無需修改
+
+### 2026-04-02：新增關鍵字搜尋模式（Prompt-based Recommendation）
+
+- **原因**：Demo 展示需求——希望讓觀看者可自由輸入喜好描述，不限於 3 個預設 persona
+- **決策**：新增獨立的 `GET /api/recommendations/stream/search?prompt=` 端點；前端新增 Tab 切換「個人化推薦」與「關鍵字搜尋」兩種模式
+- **架構影響**：
+  - `ILlmService` 新增 `StreamRecommendationsByPromptAsync`（OCP：擴展介面而非修改既有方法）
+  - `FakeLlmService` / `OllamaLlmService` 各自實作新方法
+  - `RecommendationService` 新增 `StreamByPromptAsync`（將 prompt 直接 embed → 向量召回 → LLM 串流）
+  - `useRecommendations` 新增 `fetchByPrompt` 方法，與既有 `fetch`（userId）並列
 
 ### 2026-04-02：Ollama HttpClient Timeout 延長為 10 分鐘
 
